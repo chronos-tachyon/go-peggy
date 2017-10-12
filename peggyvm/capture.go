@@ -5,41 +5,6 @@ import (
 	"fmt"
 )
 
-type CapturePair struct {
-	S uint64
-	E uint64
-}
-
-func (pair CapturePair) String() string {
-	return fmt.Sprintf("(%d,%d)", pair.S, pair.E)
-}
-
-type Capture struct {
-	Solo  CapturePair
-	Multi []CapturePair
-}
-
-func (c Capture) String() string {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	buf.WriteString(c.Solo.String())
-	if len(c.Multi) != 0 {
-		buf.WriteByte(' ')
-		buf.WriteByte('[')
-		first := true
-		for _, pair := range c.Multi {
-			if !first {
-				buf.WriteByte(' ')
-			}
-			buf.WriteString(pair.String())
-			first = false
-		}
-		buf.WriteByte(']')
-	}
-	buf.WriteByte('}')
-	return buf.String()
-}
-
 // CaptureMeta records metadata about one of a pattern's captures.
 type CaptureMeta struct {
 	Name   string
@@ -62,4 +27,43 @@ type Assignment struct {
 	// IsEnd is true iff the end of the capture is being assigned, or false
 	// iff the start of the capture is being assigned.
 	IsEnd bool
+}
+
+type CapturePair struct {
+	S uint64
+	E uint64
+}
+
+func (pair CapturePair) String() string {
+	return fmt.Sprintf("(%d,%d)", pair.S, pair.E)
+}
+
+type Capture struct {
+	Exists bool
+	Solo   CapturePair
+	Multi  []CapturePair
+}
+
+func (c Capture) String() string {
+	if !c.Exists {
+		return "-"
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	buf.WriteString(c.Solo.String())
+	if len(c.Multi) != 0 {
+		buf.WriteByte(' ')
+		buf.WriteByte('[')
+		first := true
+		for _, pair := range c.Multi {
+			if !first {
+				buf.WriteByte(' ')
+			}
+			buf.WriteString(pair.String())
+			first = false
+		}
+		buf.WriteByte(']')
+	}
+	buf.WriteByte('}')
+	return buf.String()
 }

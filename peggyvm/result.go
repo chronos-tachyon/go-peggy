@@ -6,7 +6,7 @@ import (
 )
 
 type Result struct {
-	Success bool
+	Success  bool
 	Captures []Capture
 }
 

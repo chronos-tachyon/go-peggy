@@ -260,6 +260,7 @@ func (p *Program) Match(input []byte) Result {
 			pair.S = pending[a.Index]
 			pair.E = a.DP
 			ptr := &r.Captures[a.Index]
+			ptr.Exists = true
 			ptr.Solo = pair
 			ptr.Multi = append(ptr.Multi, pair)
 			pending[a.Index] = 0
