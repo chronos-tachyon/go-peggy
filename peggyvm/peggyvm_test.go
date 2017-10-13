@@ -176,7 +176,7 @@ func TestProgram_Disassemble(t *testing.T) {
 
 	for i, row := range data {
 		var buf bytes.Buffer
-		err := row.Program.Disassemble(&buf)
+		_, err := row.Program.Disassemble(&buf)
 		if err != nil {
 			t.Errorf("%s/%03d: error: %v", t.Name(), i, err)
 			continue

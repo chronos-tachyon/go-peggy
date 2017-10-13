@@ -6,17 +6,29 @@ import (
 	"io"
 )
 
-// Op is a single PEG match instruction, decoded from raw bytecode.
+// Op is a single PEG instruction, decoded from raw bytecode.
 type Op struct {
-	XP   uint64
+	// XP is the code address of the start of the instruction.
+	XP uint64
+
+	// Imm0, Imm1, and Imm2 are the instruction's immediates.
 	Imm0 uint64
 	Imm1 uint64
 	Imm2 uint64
+
+	// Meta is an *optional* pointer to the metadata about this
+	// instruction's opcode.  If this is nil, use Code.Meta() instead.
 	Meta *OpMeta
+
+	// Code is this instruction's opcode.
 	Code OpCode
-	Len  uint
+
+	// Len is the actual encoded length of this instruction's bytecode.
+	// Decoding of the next instruction will begin at XP+Len.
+	Len uint
 }
 
+// String provides a programmer-friendly debugging string for the Op.
 func (op *Op) String() string {
 	var buf bytes.Buffer
 	first := true
@@ -44,6 +56,8 @@ func (op *Op) String() string {
 	return buf.String()
 }
 
+// Decode attempts to decode an instruction from the provided bytecode stream
+// at the provided code address. Overwrites this Op's existing data.
 func (op *Op) Decode(stream []byte, xp uint64) error {
 	op.XP = xp
 	op.Imm0 = 0
@@ -151,7 +165,11 @@ func (op *Op) Decode(stream []byte, xp uint64) error {
 	return err
 }
 
-func (op *Op) Encode(buf *bytes.Buffer) error {
+// Encode generates the bytecode for this instruction. XP and Len are ignored.
+// Meta must be the correct value or nil.
+func (op *Op) Encode(w io.Writer) (int, error) {
+	var buf bytes.Buffer
+
 	meta := op.Meta
 	if meta == nil {
 		meta = op.Code.Meta()
@@ -179,5 +197,6 @@ func (op *Op) Encode(buf *bytes.Buffer) error {
 	buf.Write(imm0)
 	buf.Write(imm1)
 	buf.Write(imm2)
-	return nil
+
+	return w.Write(buf.Bytes())
 }

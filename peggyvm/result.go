@@ -5,11 +5,13 @@ import (
 	"fmt"
 )
 
+// Result is the outcome of an Execution.
 type Result struct {
 	Success  bool
 	Captures []Capture
 }
 
+// String provides a programmer-friendly debugging string for the Result.
 func (r Result) String() string {
 	var buf bytes.Buffer
 	buf.WriteByte('{')

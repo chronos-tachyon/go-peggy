@@ -6,12 +6,24 @@ import (
 	"github.com/chronos-tachyon/go-peggy/byteset"
 )
 
-type RunState uint8
+// ExecutionState records information about whether an Execution has
+// terminated, and why it was terminated if it was.
+type ExecutionState uint8
 
 const (
-	RunningState RunState = iota
+	// RunningState means the Execution has not terminated.
+	RunningState ExecutionState = iota
+
+	// SuccessState means the Execution has terminated normally with a
+	// successful match of the input.
 	SuccessState
+
+	// FailureState means the Execution has terminated normally but was
+	// unable to match the input.
 	FailureState
+
+	// FailureState means the Execution has terminated abnormally due to an
+	// error in the program itself.
 	ErrorState
 )
 
@@ -63,7 +75,7 @@ type Execution struct {
 	//
 	CS []Frame
 
-	R RunState
+	R ExecutionState
 }
 
 func (x *Execution) popCS() (Frame, bool) {
@@ -77,33 +89,7 @@ func (x *Execution) popCS() (Frame, bool) {
 }
 
 func (x *Execution) availableBytes() uint64 {
-	assert(x.DP <= uint64(len(x.I)), "DP out of range")
 	return uint64(len(x.I)) - x.DP
-}
-
-func (x *Execution) end() {
-	x.R = SuccessState
-}
-
-func (x *Execution) giveUp() {
-	x.R = FailureState
-	x.KS = nil
-}
-
-func (x *Execution) fail() {
-	for {
-		fr, ok := x.popCS()
-		if !ok {
-			x.giveUp()
-			return
-		}
-		if fr.IsChoice {
-			x.DP = fr.DP
-			x.XP = fr.XP
-			x.KS = fr.KS
-			return
-		}
-	}
 }
 
 func (x *Execution) matchN(m byteset.Matcher, n uint64) bool {
@@ -131,6 +117,24 @@ func (x *Execution) matchLit(l []byte) (uint64, bool) {
 	return n, true
 }
 
+func (x *Execution) fail() {
+	for {
+		fr, ok := x.popCS()
+		if !ok {
+			x.R = FailureState
+			x.KS = nil
+			return
+		}
+		if fr.IsChoice {
+			x.DP = fr.DP
+			x.XP = fr.XP
+			x.KS = fr.KS
+			return
+		}
+	}
+}
+
+// Step attempts to execute the next bytecode instruction.
 func (x *Execution) Step() error {
 	if x.R != RunningState {
 		return ErrExecutionHalted
@@ -139,13 +143,24 @@ func (x *Execution) Step() error {
 	var op Op
 	err := op.Decode(x.P.Bytes, x.XP)
 	if err == io.EOF {
-		x.end()
+		x.R = SuccessState
 		return nil
 	}
 	if err != nil {
 		x.R = ErrorState
 		x.KS = nil
 		return err
+	}
+
+	rterr := func(err error) error {
+		x.R = ErrorState
+		x.KS = nil
+		return &RuntimeError{
+			Err: err,
+			XP:  op.XP,
+			DP:  x.DP,
+			Op:  &op,
+		}
 	}
 
 	x.XP += uint64(op.Len)
@@ -163,8 +178,12 @@ func (x *Execution) Step() error {
 
 	case OpCOMMIT:
 		fr, ok := x.popCS()
-		assert(ok, "COMMIT on empty stack")
-		assert(fr.IsChoice, "COMMIT on CALL/RET frame")
+		if !ok {
+			return rterr(ErrEmptyStack)
+		}
+		if !fr.IsChoice {
+			return rterr(ErrCallRetFrame)
+		}
 		x.XP = addOffset(x.XP, u2s(op.Imm0))
 
 	case OpFAIL:
@@ -185,7 +204,9 @@ func (x *Execution) Step() error {
 		}
 
 	case OpLITB:
-		assert(op.Imm0 < uint64(len(x.P.Literals)), "LITB literal index out of range")
+		if op.Imm0 >= uint64(len(x.P.Literals)) {
+			return rterr(ErrIndexRange)
+		}
 		if n, good := x.matchLit(x.P.Literals[op.Imm0]); good {
 			x.DP += n
 		} else {
@@ -193,7 +214,9 @@ func (x *Execution) Step() error {
 		}
 
 	case OpMATCHB:
-		assert(op.Imm0 < uint64(len(x.P.ByteSets)), "MATCHB byteset index out of range")
+		if op.Imm0 >= uint64(len(x.P.ByteSets)) {
+			return rterr(ErrIndexRange)
+		}
 		if x.matchN(x.P.ByteSets[op.Imm0], op.Imm1) {
 			x.DP += op.Imm1
 		} else {
@@ -212,8 +235,12 @@ func (x *Execution) Step() error {
 
 	case OpRET:
 		fr, ok := x.popCS()
-		assert(ok, "RET on empty stack")
-		assert(!fr.IsChoice, "RET on CHOICE/FAIL frame")
+		if !ok {
+			return rterr(ErrEmptyStack)
+		}
+		if !fr.IsChoice {
+			return rterr(ErrChoiceFailFrame)
+		}
 		x.XP = fr.XP
 
 	case OpTANYB:
@@ -231,7 +258,9 @@ func (x *Execution) Step() error {
 		}
 
 	case OpTLITB:
-		assert(op.Imm1 < uint64(len(x.P.Literals)), "TLITB literal index out of range")
+		if op.Imm1 >= uint64(len(x.P.Literals)) {
+			return rterr(ErrIndexRange)
+		}
 		if n, good := x.matchLit(x.P.Literals[op.Imm1]); good {
 			x.DP += n
 		} else {
@@ -239,7 +268,9 @@ func (x *Execution) Step() error {
 		}
 
 	case OpTMATCHB:
-		assert(op.Imm1 < uint64(len(x.P.ByteSets)), "TMATCHB byteset index out of range")
+		if op.Imm1 >= uint64(len(x.P.ByteSets)) {
+			return rterr(ErrIndexRange)
+		}
 		if x.matchN(x.P.ByteSets[op.Imm1], op.Imm2) {
 			x.DP += op.Imm2
 		} else {
@@ -248,8 +279,12 @@ func (x *Execution) Step() error {
 
 	case OpPCOMMIT:
 		fr, ok := x.popCS()
-		assert(ok, "PCOMMIT on empty stack")
-		assert(fr.IsChoice, "PCOMMIT on CALL/RET frame")
+		if !ok {
+			return rterr(ErrEmptyStack)
+		}
+		if !fr.IsChoice {
+			return rterr(ErrCallRetFrame)
+		}
 		fr.DP = x.DP
 		fr.XP = addOffset(x.XP, u2s(op.Imm0))
 		fr.KS = x.KS
@@ -257,30 +292,47 @@ func (x *Execution) Step() error {
 
 	case OpBCOMMIT:
 		fr, ok := x.popCS()
-		assert(ok, "BCOMMIT on empty stack")
-		assert(fr.IsChoice, "BCOMMIT on CALL/RET frame")
+		if !ok {
+			return rterr(ErrEmptyStack)
+		}
+		if !fr.IsChoice {
+			return rterr(ErrCallRetFrame)
+		}
 		x.DP = fr.DP
 		x.KS = fr.KS
 		x.XP = addOffset(x.XP, u2s(op.Imm0))
 
 	case OpSPANB:
-		assert(op.Imm0 < uint64(len(x.P.ByteSets)), "SPANB byteset index out of range")
+		if op.Imm0 >= uint64(len(x.P.ByteSets)) {
+			return rterr(ErrIndexRange)
+		}
 		for m, n := x.P.ByteSets[op.Imm0], uint64(len(x.I)); x.DP < n && m.Match(x.I[x.DP]); x.DP += 1 {
 			// pass
 		}
 
 	case OpFAIL2X:
 		fr, ok := x.popCS()
-		assert(ok, "FAIL2X on empty stack")
-		assert(fr.IsChoice, "FAIL2X on CALL/RET frame")
+		if !ok {
+			return rterr(ErrEmptyStack)
+		}
+		if !fr.IsChoice {
+			return rterr(ErrCallRetFrame)
+		}
 		x.fail()
 
 	case OpRWNDB:
-		assert(x.DP >= op.Imm0, "RWNDB byte count out of range")
+		if op.Imm0 > x.DP {
+			return rterr(ErrCountRange)
+		}
 		x.DP -= op.Imm0
 
 	case OpFCAP:
-		assert(x.DP >= op.Imm1, "FCAP byte count out of range")
+		if op.Imm0 >= uint64(len(x.P.Captures)) {
+			return rterr(ErrIndexRange)
+		}
+		if op.Imm1 > x.DP {
+			return rterr(ErrCountRange)
+		}
 		x.KS = append(x.KS, Assignment{
 			Index: op.Imm0,
 			IsEnd: false,
@@ -293,6 +345,9 @@ func (x *Execution) Step() error {
 		})
 
 	case OpBCAP:
+		if op.Imm0 >= uint64(len(x.P.Captures)) {
+			return rterr(ErrIndexRange)
+		}
 		x.KS = append(x.KS, Assignment{
 			Index: op.Imm0,
 			IsEnd: false,
@@ -300,6 +355,9 @@ func (x *Execution) Step() error {
 		})
 
 	case OpECAP:
+		if op.Imm0 >= uint64(len(x.P.Captures)) {
+			return rterr(ErrIndexRange)
+		}
 		x.KS = append(x.KS, Assignment{
 			Index: op.Imm0,
 			IsEnd: true,
@@ -307,14 +365,20 @@ func (x *Execution) Step() error {
 		})
 
 	case OpGIVEUP:
-		x.giveUp()
+		x.R = FailureState
+		x.KS = nil
 
 	case OpEND:
-		x.end()
+		x.R = SuccessState
 	}
 	return nil
 }
 
+// Run attempts to execute the bytecode program to completion.
+//
+// WARNING: No time limits are enforced, and it's easy to write an infinite
+//          loop. Think carefully before running untrusted bytecode.
+//
 func (x *Execution) Run() error {
 	for x.R == RunningState {
 		err := x.Step()

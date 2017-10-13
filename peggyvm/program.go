@@ -61,13 +61,21 @@ func (p *Program) FindLabel(xp uint64) *Label {
 // Disassemble converts the program's bytecode into assembly instructions,
 // writing the result to the provided buffer.
 //
-// TODO: add error checking so we can take any io.Writer
-//
-func (p *Program) Disassemble(buf *bytes.Buffer) error {
+func (p *Program) Disassemble(w io.Writer) (int, error) {
+	var buf bytes.Buffer
+	var total int
+
+	flush := func() error {
+		n, err := w.Write(buf.Bytes())
+		total += n
+		buf.Reset()
+		return err
+	}
+
 	for _, literal := range p.Literals {
 		buf.WriteString("%literal ")
 		if utf8.Valid(literal) {
-			fmt.Fprintf(buf, "%q", literal)
+			fmt.Fprintf(&buf, "%q", literal)
 		} else {
 			first := true
 			for _, b := range literal {
@@ -75,26 +83,42 @@ func (p *Program) Disassemble(buf *bytes.Buffer) error {
 					buf.WriteByte(',')
 					buf.WriteByte(' ')
 				}
-				fmt.Fprintf(buf, "0x%02x", b)
+				fmt.Fprintf(&buf, "0x%02x", b)
 				first = false
 			}
 		}
 		buf.WriteByte('\n')
+		if err := flush(); err != nil {
+			return total, err
+		}
 	}
 
 	for _, matcher := range p.ByteSets {
 		buf.WriteString("%matcher ")
 		buf.WriteString(matcher.String())
 		buf.WriteByte('\n')
-	}
-
-	fmt.Fprintf(buf, "%%captures %d\n", len(p.Captures))
-	for i, capture := range p.Captures {
-		if capture.Name != "" {
-			fmt.Fprintf(buf, "%%namedcapture %d %q\n", i, capture.Name)
+		if err := flush(); err != nil {
+			return total, err
 		}
 	}
+
+	fmt.Fprintf(&buf, "%%captures %d\n", len(p.Captures))
+	if err := flush(); err != nil {
+		return total, err
+	}
+	for i, capture := range p.Captures {
+		if capture.Name != "" {
+			fmt.Fprintf(&buf, "%%namedcapture %d %q\n", i, capture.Name)
+			if err := flush(); err != nil {
+				return total, err
+			}
+		}
+	}
+
 	buf.WriteByte('\n')
+	if err := flush(); err != nil {
+		return total, err
+	}
 
 	var op Op
 	var xp uint64
@@ -107,7 +131,7 @@ func (p *Program) Disassemble(buf *bytes.Buffer) error {
 			break
 		}
 		if err != nil {
-			return err
+			return total, err
 		}
 
 		meta := op.Meta
@@ -138,7 +162,7 @@ func (p *Program) Disassemble(buf *bytes.Buffer) error {
 			break
 		}
 		if err != nil {
-			return err
+			return total, err
 		}
 
 		if _, yes := labelNeeded[xp]; yes {
@@ -147,15 +171,21 @@ func (p *Program) Disassemble(buf *bytes.Buffer) error {
 				buf.WriteString(label.Name)
 				buf.WriteByte(':')
 				buf.WriteByte('\n')
+				if err := flush(); err != nil {
+					return total, err
+				}
 			}
 		}
 
 		xp += uint64(op.Len)
 		buf.WriteByte('\t')
-		p.writeOp(buf, &op, xp)
+		p.writeOp(&buf, &op, xp)
 		buf.WriteByte('\n')
+		if err := flush(); err != nil {
+			return total, err
+		}
 	}
-	return nil
+	return total, nil
 }
 
 func (p *Program) writeOp(buf *bytes.Buffer, op *Op, xp uint64) {
