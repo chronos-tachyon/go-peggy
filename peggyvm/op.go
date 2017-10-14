@@ -164,39 +164,3 @@ func (op *Op) Decode(stream []byte, xp uint64) error {
 	}
 	return err
 }
-
-// Encode generates the bytecode for this instruction. XP and Len are ignored.
-// Meta must be the correct value or nil.
-func (op *Op) Encode(w io.Writer) (int, error) {
-	var buf bytes.Buffer
-
-	meta := op.Meta
-	if meta == nil {
-		meta = op.Code.Meta()
-	}
-
-	imm0 := meta.Imm0.Encode(op.Imm0)
-	imm1 := meta.Imm1.Encode(op.Imm1)
-	imm2 := meta.Imm2.Encode(op.Imm2)
-
-	a := byte(op.Code)
-	b := ImmLengthEncode(len(imm0))
-	c := ImmLengthEncode(len(imm1))
-	d := ImmLengthEncode(len(imm2))
-
-	twoByteRequired := (a > 0x07) || (b > 3) || (c > 3) || (d > 0)
-	if twoByteRequired {
-		byte0 := 0x80 | (a << 1) | (b >> 2)
-		byte1 := (b << 6) | (c << 3) | d
-		buf.WriteByte(byte0)
-		buf.WriteByte(byte1)
-	} else {
-		byte0 := (a << 4) | (b << 2) | c
-		buf.WriteByte(byte0)
-	}
-	buf.Write(imm0)
-	buf.Write(imm1)
-	buf.Write(imm2)
-
-	return w.Write(buf.Bytes())
-}

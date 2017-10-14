@@ -32,7 +32,7 @@ type Program struct {
 	Captures []CaptureMeta
 
 	// NamedCaptures is a map from capture names to capture indices.
-	NamedCaptures map[string]uint16
+	NamedCaptures map[string]uint64
 
 	// Labels is an auxiliary list of program labels.
 	Labels []*Label

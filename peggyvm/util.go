@@ -143,3 +143,32 @@ func writeRuneLiteral(buf *bytes.Buffer, r rune) {
 		fmt.Fprintf(buf, "$%04x", r)
 	}
 }
+
+func hexDump(in []byte) string {
+	var buf bytes.Buffer
+	buf.WriteString("00000")
+	dirty := false
+	i := uint(0)
+	for i < uint(len(in)) {
+		b := in[i]
+		mod16 := i & 0xf
+		if (mod16 == 0x0 || mod16 == 0x8) {
+			buf.WriteByte(' ')
+			buf.WriteByte(' ')
+		} else {
+			buf.WriteByte(' ')
+		}
+		fmt.Fprintf(&buf, "%02x", b)
+		dirty = true
+		i += 1
+		if mod16 == 0xf {
+			fmt.Fprintf(&buf, "\n%05x", i)
+			dirty = false
+		}
+	}
+	if dirty {
+		fmt.Fprintf(&buf, "\n%05x", i)
+	}
+	buf.WriteByte('\n')
+	return buf.String()
+}
